@@ -9,14 +9,14 @@ export function HealthCheck() {
       <Button
         onClick={checkHealth}
         disabled={loading}
-        className="bg-green-600 hover:bg-green-700 text-white"
+        className="bg-brand-blue hover:bg-brand-blue/80 text-white"
       >
-        {loading ? "Checking..." : "Check Health"}
+        {loading ? "Checking..." : "Check Backend Health"}
       </Button>
       {status && (
-        <p className="text-green-600 font-medium">Status: {status}</p>
+        <p className="text-green-400 font-mono text-[12px] tracking-wide">200 OK</p>
       )}
-      {error && <p className="text-red-600 font-medium">Error: {error}</p>}
+      {error && <p className="text-destructive font-medium text-[13px]">Error: {error}</p>}
     </div>
   );
 }

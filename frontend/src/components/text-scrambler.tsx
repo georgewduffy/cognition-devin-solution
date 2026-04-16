@@ -25,20 +25,20 @@ export function TextScrambler() {
         <Button
           onClick={handleSend}
           disabled={loading || !text.trim()}
-          className="bg-blue-600 hover:bg-blue-700 text-white"
+          className="bg-accent-blue hover:bg-accent-blue/80 text-white"
         >
           {loading ? "Sending..." : "Send"}
         </Button>
       </div>
       {result && (
-        <div className="w-full rounded-md border p-3 text-left">
-          <p className="text-sm text-muted-foreground">
+        <div className="w-full rounded-md bg-elevated border border-border-primary p-3 text-left">
+          <p className="text-[13px] text-text-secondary">
             Original: {result.original}
           </p>
-          <p className="text-sm font-medium">Scrambled: {result.scrambled}</p>
+          <p className="text-[13px] font-medium text-text-primary">Scrambled: {result.scrambled}</p>
         </div>
       )}
-      {error && <p className="text-red-600 font-medium">Error: {error}</p>}
+      {error && <p className="text-destructive font-medium text-[13px]">Error: {error}</p>}
     </div>
   );
 }

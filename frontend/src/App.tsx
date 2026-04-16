@@ -1,13 +1,28 @@
-import { HealthCheck } from "@/components/health-check";
-import { TextScrambler } from "@/components/text-scrambler";
+import { Routes, Route, Navigate } from "react-router-dom";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppSidebar } from "@/components/app-sidebar";
+import { MainHeader } from "@/components/main-header";
+import { AskPage } from "@/pages/ask-page";
+import { ReviewPage } from "@/pages/review-page";
+import { VulnerabilitiesPage } from "@/pages/vulnerabilities-page";
 
 function App() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-8 p-8">
-      <h1 className="text-4xl font-bold">Dashboard</h1>
-      <HealthCheck />
-      <TextScrambler />
-    </div>
+    <TooltipProvider>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <MainHeader />
+          <Routes>
+            <Route path="/ask" element={<AskPage />} />
+            <Route path="/review" element={<ReviewPage />} />
+            <Route path="/vulnerabilities" element={<VulnerabilitiesPage />} />
+            <Route path="*" element={<Navigate to="/ask" replace />} />
+          </Routes>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
 
