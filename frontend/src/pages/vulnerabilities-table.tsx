@@ -7,7 +7,7 @@ import {
   type RowSelectionState,
 } from "@tanstack/react-table";
 
-import type { VulnerabilityIssue } from "@/api/client";
+import type { FixIssueStatus, VulnerabilityIssue } from "@/api/client";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DevinActionCell } from "./devin-action-cell";
 
 function TypeBadge({ label }: { label: string | null }) {
   if (!label) {
@@ -52,71 +53,99 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
-const columns: ColumnDef<VulnerabilityIssue>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <Checkbox
-        aria-label="Select all"
-        checked={table.getIsAllPageRowsSelected()}
-        indeterminate={
-          !table.getIsAllPageRowsSelected() &&
-          table.getIsSomePageRowsSelected()
-        }
-        onCheckedChange={(checked) =>
-          table.toggleAllPageRowsSelected(checked === true)
-        }
-      />
-    ),
-    cell: ({ row }) => (
-      <Checkbox
-        aria-label={`Select issue #${row.original.number}`}
-        checked={row.getIsSelected()}
-        onCheckedChange={(checked) => row.toggleSelected(checked === true)}
-      />
-    ),
-    enableSorting: false,
-    size: 32,
-  },
-  {
-    accessorKey: "title",
-    header: "Name",
-    cell: ({ row }) => {
-      const { html_url, title, number } = row.original;
-      return (
-        <a
-          href={html_url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="block max-w-[640px] truncate text-text-primary hover:underline"
-          title={title}
-        >
-          <span className="text-text-secondary">#{number}</span>{" "}
-          <span>{title}</span>
-        </a>
-      );
+interface RowContext {
+  fixStatuses: Record<number, FixIssueStatus>;
+  onFix: (issueId: number) => void;
+}
+
+function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
+  return [
+    {
+      id: "select",
+      header: ({ table }) => (
+        <Checkbox
+          aria-label="Select all"
+          checked={table.getIsAllPageRowsSelected()}
+          indeterminate={
+            !table.getIsAllPageRowsSelected() &&
+            table.getIsSomePageRowsSelected()
+          }
+          onCheckedChange={(checked) =>
+            table.toggleAllPageRowsSelected(checked === true)
+          }
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          aria-label={`Select issue #${row.original.number}`}
+          checked={row.getIsSelected()}
+          onCheckedChange={(checked) => row.toggleSelected(checked === true)}
+        />
+      ),
+      enableSorting: false,
+      size: 32,
     },
-  },
-  {
-    accessorKey: "vulnerability_type",
-    header: "Type",
-    cell: ({ row }) => <TypeBadge label={row.original.vulnerability_type} />,
-  },
-  {
-    accessorKey: "state",
-    header: "Status",
-    cell: ({ row }) => <StateBadge state={row.original.state} />,
-  },
-];
+    {
+      accessorKey: "title",
+      header: "Name",
+      cell: ({ row }) => {
+        const { html_url, title, number } = row.original;
+        return (
+          <a
+            href={html_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="block max-w-[520px] whitespace-normal break-words text-text-primary hover:underline"
+            title={title}
+          >
+            <span className="text-text-secondary">#{number}</span>{" "}
+            <span>{title}</span>
+          </a>
+        );
+      },
+    },
+    {
+      accessorKey: "vulnerability_type",
+      header: "Type",
+      cell: ({ row }) => <TypeBadge label={row.original.vulnerability_type} />,
+    },
+    {
+      accessorKey: "state",
+      header: "Status",
+      cell: ({ row }) => <StateBadge state={row.original.state} />,
+    },
+    {
+      id: "devin",
+      header: "Devin",
+      cell: ({ row }) => (
+        <DevinActionCell
+          issueId={row.original.id}
+          status={ctx.fixStatuses[row.original.id]}
+          onFix={ctx.onFix}
+        />
+      ),
+    },
+  ];
+}
 
 interface VulnerabilitiesTableProps {
   issues: VulnerabilityIssue[];
+  fixStatuses: Record<number, FixIssueStatus>;
+  onFix: (issueId: number) => void;
 }
 
-export function VulnerabilitiesTable({ issues }: VulnerabilitiesTableProps) {
+export function VulnerabilitiesTable({
+  issues,
+  fixStatuses,
+  onFix,
+}: VulnerabilitiesTableProps) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const data = useMemo(() => issues, [issues]);
+  const columns = useMemo(
+    () => buildColumns({ fixStatuses, onFix }),
+    [fixStatuses, onFix]
+  );
 
   const table = useReactTable({
     data,
@@ -159,7 +188,9 @@ export function VulnerabilitiesTable({ issues }: VulnerabilitiesTableProps) {
                 colSpan={columns.length}
                 className="h-24 px-3 text-center text-[13px] text-text-secondary"
               >
-                No vulnerabilities yet. Click <span className="text-text-primary">Sync Vulnerability Issues</span> to fetch them from GitHub.
+                No vulnerabilities yet. Click{" "}
+                <span className="text-text-primary">Sync Vulnerability Issues</span>{" "}
+                to fetch them from GitHub.
               </TableCell>
             </TableRow>
           ) : (
@@ -170,7 +201,10 @@ export function VulnerabilitiesTable({ issues }: VulnerabilitiesTableProps) {
                 className="border-border-primary text-[13px] text-text-primary hover:bg-hover-fill"
               >
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} className="px-3 py-2.5">
+                  <TableCell
+                    key={cell.id}
+                    className="min-h-[56px] px-3 py-3.5 align-middle"
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}
