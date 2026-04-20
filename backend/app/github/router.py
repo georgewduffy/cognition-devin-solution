@@ -11,9 +11,15 @@ from app.github.models import (
     CreateIssueRequest,
     IssueDetail,
     IssueSummary,
+    VulnerabilityIssue,
     WebhookAck,
 )
-from app.github.service import get_client, to_summary
+from app.github.service import (
+    VULNERABILITY_LABEL,
+    get_client,
+    to_summary,
+    to_vulnerability,
+)
 from app.github.webhook import verify_signature
 
 logger = logging.getLogger(__name__)
@@ -38,6 +44,19 @@ async def create_issue(
         assignees=request.assignees,
     )
     return to_summary(raw)
+
+
+@router.get("/vulnerabilities", response_model=list[VulnerabilityIssue])
+async def list_vulnerabilities(
+    client: GitHubClient = Depends(get_client),
+) -> list[VulnerabilityIssue]:
+    """Return every issue in the configured repo labelled `vulnerability`.
+
+    Each issue carries a stable GitHub `id` so the frontend can update rows in
+    place on re-sync rather than duplicating them.
+    """
+    raw = await client.list_issues_by_label(label=VULNERABILITY_LABEL, state="all")
+    return [to_vulnerability(r) for r in raw]
 
 
 @router.get("/issues/{number}", response_model=IssueDetail)

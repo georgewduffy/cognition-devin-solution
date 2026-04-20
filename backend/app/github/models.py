@@ -24,6 +24,23 @@ class IssueDetail(IssueSummary):
     updated_at: str
 
 
+class VulnerabilityIssue(BaseModel):
+    """A GitHub issue labelled `vulnerability`, enriched with its vulnerability type.
+
+    `id` is the GitHub issue's global numeric id. It is stable across title,
+    label, and state changes, which lets the frontend update rows in place on
+    re-sync rather than duplicating them.
+    """
+
+    id: int
+    number: int
+    title: str
+    state: str
+    html_url: str
+    labels: list[str] = Field(default_factory=list)
+    vulnerability_type: str | None = None
+
+
 class WebhookAck(BaseModel):
     event: str
     action: str | None = None

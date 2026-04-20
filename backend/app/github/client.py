@@ -84,3 +84,37 @@ class GitHubClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    async def list_issues_by_label(
+        self,
+        label: str,
+        state: str = "all",
+        per_page: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List issues in the configured repo filtered by a label name.
+
+        Returns every matching issue (paginates when necessary). Pull requests
+        are filtered out — the GitHub `/issues` endpoint returns both issues
+        and PRs, and PR payloads carry a `pull_request` key.
+        """
+        issues: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            resp = await self._client.get(
+                f"/repos/{self.owner}/{self.repo}/issues",
+                params={
+                    "labels": label,
+                    "state": state,
+                    "per_page": per_page,
+                    "page": page,
+                },
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not batch:
+                break
+            issues.extend(i for i in batch if "pull_request" not in i)
+            if len(batch) < per_page:
+                break
+            page += 1
+        return issues
