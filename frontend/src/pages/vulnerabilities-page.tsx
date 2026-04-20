@@ -2,7 +2,8 @@ import { useVulnerabilities } from "@/hooks/use-vulnerabilities";
 import { VulnerabilitiesTable } from "./vulnerabilities-table";
 
 export function VulnerabilitiesPage() {
-  const { issues, syncStatus, error, sync, clear } = useVulnerabilities();
+  const { issues, syncStatus, error, fixStatuses, sync, clear, startFix } =
+    useVulnerabilities();
 
   const syncLabel =
     syncStatus === "loading"
@@ -58,7 +59,11 @@ export function VulnerabilitiesPage() {
         <div className="mt-5 h-px bg-border-secondary" />
 
         <div className="mt-6">
-          <VulnerabilitiesTable issues={issues} />
+          <VulnerabilitiesTable
+            issues={issues}
+            fixStatuses={fixStatuses}
+            onFix={startFix}
+          />
         </div>
       </div>
     </div>
