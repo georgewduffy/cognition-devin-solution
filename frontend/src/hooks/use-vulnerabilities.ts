@@ -23,17 +23,14 @@ export function useVulnerabilities() {
     setError(null);
     try {
       const data = await fetchVulnerabilities();
-      // Merge by stable GitHub `id` so re-syncing updates existing rows in
-      // place rather than duplicating them.
-      setIssues((prev) => {
-        const byId = new Map<number, VulnerabilityIssue>(
-          prev.map((issue) => [issue.id, issue])
-        );
-        for (const issue of data) {
-          byId.set(issue.id, issue);
-        }
-        return Array.from(byId.values());
-      });
+      // The backend returns the authoritative full set of current
+      // vulnerability issues, so replace local state rather than merging —
+      // issues whose `vulnerability` label is removed upstream must stop
+      // appearing in the table. Update-in-place behaviour on re-sync is
+      // preserved by tanstack-table keying rows on the stable GitHub `id`
+      // (see `getRowId` in vulnerabilities-table.tsx), which keeps
+      // per-row selection/DOM identity across renders.
+      setIssues(data);
       setSyncStatus("success");
       successTimerRef.current = setTimeout(() => {
         setSyncStatus("idle");
