@@ -13,9 +13,13 @@ Design notes:
 * The poller creates its own ``DevinClient`` (not the request-scoped
   one) because it outlives the originating request.
 * Terminal states follow the Devin v3 schema: ``exit`` means the
-  session finished, ``error`` / ``suspended`` mean it bailed out. We
-  look for a ``pull_requests[0].pr_url`` on exit and mark the issue
-  ``FIXED``; otherwise we surface an error.
+  session finished, ``error`` / ``suspended`` mean it bailed out.
+  From the user's perspective the issue is fixed the moment Devin
+  opens a PR, so ``_poll_session`` flips ``FIXED`` as soon as
+  ``pull_requests[0].pr_url`` appears rather than waiting for the
+  session to exit (sessions routinely sit in ``running`` for a while
+  after pushing the PR). Terminal states without a PR surface an
+  error.
 """
 
 from __future__ import annotations
@@ -142,12 +146,15 @@ async def _poll_session(
 ) -> None:
     """Poll a running Devin session until it reaches a terminal state.
 
-    Updates ``_REGISTRY`` in place. Keeps the ``FIXING`` state until the
-    session's ``status`` enters ``{exit, error, suspended}``; on ``exit``
-    with a pull request we move to ``FIXED`` and record the PR URL. All
-    other terminal states surface an error and drop back to
+    Updates ``_REGISTRY`` in place. Flips to ``FIXED`` as soon as Devin
+    opens a pull request (Devin sessions often remain ``running`` for a
+    while after the PR is pushed, and from the user's perspective the
+    issue is already fixed once the PR link exists). If the session
+    reaches a terminal state (``exit`` / ``error`` / ``suspended``)
+    without ever producing a PR we surface an error and drop back to
     ``NOT_FIXED`` so the user can retry.
     """
+    current_task = asyncio.current_task()
     client = DevinClient(settings)
     deadline = asyncio.get_event_loop().time() + POLL_TIMEOUT_SECONDS
     try:
@@ -167,18 +174,19 @@ async def _poll_session(
             pull_requests = raw.get("pull_requests") or []
             pr_url = _first_pr_url(pull_requests)
 
-            if status_str in _TERMINAL_STATUSES:
-                if status_str == "exit" and pr_url:
-                    await _set_status(
-                        FixIssueStatus(
-                            issue_id=issue_id,
-                            state=DevinActionState.FIXED,
-                            session_id=session_id,
-                            session_url=raw.get("url"),
-                            pr_url=pr_url,
-                        )
+            if pr_url:
+                await _set_status(
+                    FixIssueStatus(
+                        issue_id=issue_id,
+                        state=DevinActionState.FIXED,
+                        session_id=session_id,
+                        session_url=raw.get("url"),
+                        pr_url=pr_url,
                     )
-                    return
+                )
+                return
+
+            if status_str in _TERMINAL_STATUSES:
                 detail = raw.get("status_detail") or status_str
                 await _set_error(
                     issue_id,
@@ -188,15 +196,13 @@ async def _poll_session(
                 )
                 return
 
-            # Still running — refresh session_url / pr_url in case one
-            # appeared mid-run (Devin can open the PR before exiting).
+            # Still running — refresh session_url while we wait.
             await _set_status(
                 FixIssueStatus(
                     issue_id=issue_id,
                     state=DevinActionState.FIXING,
                     session_id=session_id,
                     session_url=raw.get("url"),
-                    pr_url=pr_url,
                 )
             )
 
@@ -212,8 +218,14 @@ async def _poll_session(
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
     finally:
         await client.aclose()
+        # Only clear _TASKS[issue_id] if we're still the registered task.
+        # A concurrent start_fix() for the same issue may have cancelled
+        # us and installed a replacement — we must not evict that
+        # replacement from the registry, otherwise the new task would be
+        # orphaned and a subsequent retry would fail to cancel it.
         async with _LOCK:
-            _TASKS.pop(issue_id, None)
+            if _TASKS.get(issue_id) is current_task:
+                _TASKS.pop(issue_id, None)
 
 
 def _first_pr_url(pull_requests: list[dict[str, Any]]) -> str | None:
