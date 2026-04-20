@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
 from app.devin.client import DevinClient
-from app.devin.fix_issue import get_statuses, start_fixes
+from app.devin.fix_issue import check_and_promote_fixed, get_statuses, start_fixes
 from app.devin.models import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -58,12 +58,16 @@ async def fix_issue(
 
 
 @router.post("/fix_issue/status", response_model=dict[str, FixIssueStatus])
-async def fix_issue_statuses(request: FixIssueRequest) -> dict[str, FixIssueStatus]:
+async def fix_issue_statuses(
+    request: FixIssueRequest,
+    github: GitHubClient = Depends(get_github_client),
+) -> dict[str, FixIssueStatus]:
     """Report the latest state for each id in ``request.issue_ids``.
 
     Frontend polls this every few seconds for any row currently in the
-    ``FIXING`` state so the cell can flip to ``FIXED`` (with the Devin-
-    created PR URL) as soon as the backend's poller sees it.
+    ``FIXING`` or ``FIXED`` state. For ``FIXED`` entries the handler
+    checks whether the associated PR has been merged and promotes to
+    ``RESOLVED`` when it has.
     """
-    result = get_statuses(request.issue_ids)
+    result = await check_and_promote_fixed(request.issue_ids, github)
     return {str(issue_id): status for issue_id, status in result.items()}

@@ -36,6 +36,7 @@ class DevinActionState(str, Enum):
     REQUEST_SENT = "REQUEST_SENT"
     FIXING = "FIXING"
     FIXED = "FIXED"
+    RESOLVED = "RESOLVED"
 
 
 class FixIssueRequest(BaseModel):

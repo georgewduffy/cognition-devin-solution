@@ -44,6 +44,7 @@ export const DevinActionState = {
   REQUEST_SENT: "REQUEST_SENT",
   FIXING: "FIXING",
   FIXED: "FIXED",
+  RESOLVED: "RESOLVED",
 } as const;
 export type DevinActionState =
   (typeof DevinActionState)[keyof typeof DevinActionState];

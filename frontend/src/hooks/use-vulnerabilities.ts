@@ -141,7 +141,11 @@ export function useVulnerabilities() {
   // status update and never actually fire.
   const activePollKey = useMemo(() => {
     return Object.values(fixStatuses)
-      .filter((s) => s.state === DevinActionState.FIXING)
+      .filter(
+        (s) =>
+          s.state === DevinActionState.FIXING ||
+          s.state === DevinActionState.FIXED
+      )
       .map((s) => s.issue_id)
       .sort((a, b) => a - b)
       .join(",");

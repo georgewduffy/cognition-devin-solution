@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from app.config import Settings
@@ -293,6 +294,46 @@ async def _poll_session(
         async with _LOCK:
             if _TASKS.get(issue_id) is current_task:
                 _TASKS.pop(issue_id, None)
+
+
+def _parse_pr_url(url: str) -> int | None:
+    """Extract the PR number from a GitHub pull request URL."""
+    m = re.match(r"https://github\.com/[^/]+/[^/]+/pull/(\d+)", url)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+async def check_and_promote_fixed(
+    issue_ids: list[int], github: GitHubClient
+) -> dict[int, FixIssueStatus]:
+    """Return current statuses, promoting FIXED to RESOLVED when the PR is merged."""
+    result: dict[int, FixIssueStatus] = {}
+    for iid in issue_ids:
+        status = get_status(iid)
+        if status.state is DevinActionState.FIXED and status.pr_url:
+            pr_number = _parse_pr_url(status.pr_url)
+            if pr_number is not None:
+                try:
+                    pr_data = await github.get_pull_request(pr_number)
+                    if pr_data.get("merged"):
+                        status = FixIssueStatus(
+                            issue_id=iid,
+                            state=DevinActionState.RESOLVED,
+                            session_id=status.session_id,
+                            session_url=status.session_url,
+                            pr_url=status.pr_url,
+                        )
+                        async with _LOCK:
+                            _REGISTRY[iid] = status
+                except Exception:
+                    logger.debug(
+                        "pr_merge_check_failed issue_id=%s pr_url=%s",
+                        iid,
+                        status.pr_url,
+                    )
+        result[iid] = status
+    return result
 
 
 def _first_pr_url(pull_requests: list[dict[str, Any]]) -> str | None:
