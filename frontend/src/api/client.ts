@@ -62,7 +62,30 @@ async function parseError(res: Response): Promise<string> {
   try {
     const body = await res.json();
     if (body && typeof body === "object" && "detail" in body) {
-      detail = String((body as { detail: unknown }).detail);
+      const raw = (body as { detail: unknown }).detail;
+      if (typeof raw === "string") {
+        detail = raw;
+      } else if (Array.isArray(raw)) {
+        // FastAPI validation errors come through as an array of
+        // `{loc, msg, type}` objects — `String()` on that would
+        // produce "[object Object]", so pick out the human-readable
+        // `msg` fields instead.
+        detail = raw
+          .map((entry) => {
+            if (
+              entry &&
+              typeof entry === "object" &&
+              "msg" in entry &&
+              typeof (entry as { msg: unknown }).msg === "string"
+            ) {
+              return (entry as { msg: string }).msg;
+            }
+            return JSON.stringify(entry);
+          })
+          .join("; ");
+      } else if (raw && typeof raw === "object") {
+        detail = JSON.stringify(raw);
+      }
     }
   } catch {
     // ignore
