@@ -78,26 +78,63 @@ export async function fetchVulnerabilities(): Promise<VulnerabilityIssue[]> {
   return res.json();
 }
 
-export async function startFixIssue(
-  issue_id: number
-): Promise<FixIssueStatus> {
+/**
+ * Decode a `{ "<issue_id>": FixIssueStatus }` JSON map into a typed
+ * `Record<number, FixIssueStatus>`. JSON object keys are always
+ * strings, but on the client we key fix state by the numeric GitHub
+ * issue id everywhere else, so we coerce back to `number` at the
+ * boundary.
+ */
+function decodeStatusMap(
+  raw: Record<string, FixIssueStatus>
+): Record<number, FixIssueStatus> {
+  const out: Record<number, FixIssueStatus> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = Number(key);
+    if (Number.isFinite(id)) {
+      out[id] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Start Devin fix sessions for one or more vulnerability issues in
+ * parallel. Both the per-row *Fix* button (array of length 1) and the
+ * top-level *Fix All* / *Fix N Vulnerabilities* button hit this same
+ * endpoint. The backend kicks off one Devin session per id
+ * concurrently and returns the initial status for each.
+ */
+export async function startFixIssues(
+  issue_ids: number[]
+): Promise<Record<number, FixIssueStatus>> {
   const res = await fetch(`${API_BASE}/devin/fix_issue`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ issue_id }),
+    body: JSON.stringify({ issue_ids }),
   });
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
-  return res.json();
+  return decodeStatusMap(await res.json());
 }
 
-export async function fetchFixIssueStatus(
-  issue_id: number
-): Promise<FixIssueStatus> {
-  const res = await fetch(`${API_BASE}/devin/fix_issue/${issue_id}`);
+/**
+ * Batch-poll the latest fix status for a set of issue ids. Used by
+ * the sync-time hydration and the periodic polling of rows that are
+ * currently `FIXING`. Returns a map keyed by numeric issue id.
+ */
+export async function fetchFixIssueStatuses(
+  issue_ids: number[]
+): Promise<Record<number, FixIssueStatus>> {
+  if (issue_ids.length === 0) return {};
+  const res = await fetch(`${API_BASE}/devin/fix_issue/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issue_ids }),
+  });
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
-  return res.json();
+  return decodeStatusMap(await res.json());
 }

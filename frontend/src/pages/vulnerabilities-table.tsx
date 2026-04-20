@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   flexRender,
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
   type RowSelectionState,
+  type Updater,
 } from "@tanstack/react-table";
 
 import type { FixIssueStatus, VulnerabilityIssue } from "@/api/client";
@@ -17,7 +18,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import { DevinActionCell } from "./devin-action-cell";
+
+/**
+ * Width / min-width classes applied to both the header cell and body cell
+ * for each column. We declare them in one place so header and body stay
+ * aligned and the columns don't jump as cell content changes size (e.g.
+ * the Devin column toggling between "Fix", "Starting Devin session…",
+ * "Fixing" and "Fixed").
+ *
+ * The Name column is capped at a third of the table width per product
+ * spec; everything else keeps a generous `min-w-*` to reserve space for
+ * its widest possible content.
+ */
+declare module "@tanstack/react-table" {
+  // The generic parameters are required by tanstack's declaration and
+  // are unused here — we only piggyback the interface for a shared
+  // `className` override across header + body cells.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData, TValue> {
+    className?: string;
+  }
+}
 
 function TypeBadge({ label }: { label: string | null }) {
   if (!label) {
@@ -55,7 +78,7 @@ function StateBadge({ state }: { state: string }) {
 
 interface RowContext {
   fixStatuses: Record<number, FixIssueStatus>;
-  onFix: (issueId: number) => void;
+  onFix: (issueIds: number[]) => void;
 }
 
 function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
@@ -83,11 +106,16 @@ function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
         />
       ),
       enableSorting: false,
-      size: 32,
+      meta: { className: "w-12" },
     },
     {
       accessorKey: "title",
       header: "Name",
+      // `w-1/3` caps the column width at a third of the table so long
+      // titles wrap within the column rather than pushing the other
+      // columns around; `min-w-[280px]` keeps it readable at narrow
+      // viewports.
+      meta: { className: "w-1/3 min-w-[280px]" },
       cell: ({ row }) => {
         const { html_url, title, number } = row.original;
         return (
@@ -95,7 +123,7 @@ function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
             href={html_url}
             target="_blank"
             rel="noreferrer noopener"
-            className="block max-w-[520px] whitespace-normal break-words text-text-primary hover:underline"
+            className="block whitespace-normal break-words text-text-primary hover:underline"
             title={title}
           >
             <span className="text-text-secondary">#{number}</span>{" "}
@@ -107,21 +135,27 @@ function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
     {
       accessorKey: "vulnerability_type",
       header: "Type",
+      meta: { className: "min-w-[180px]" },
       cell: ({ row }) => <TypeBadge label={row.original.vulnerability_type} />,
     },
     {
       accessorKey: "state",
       header: "Status",
+      meta: { className: "min-w-[140px]" },
       cell: ({ row }) => <StateBadge state={row.original.state} />,
     },
     {
       id: "devin",
       header: "Devin",
+      // Reserve enough width to hold the widest possible state text
+      // ("Starting Devin session…") without shifting the rest of the
+      // table when the cell switches between states.
+      meta: { className: "min-w-[220px]" },
       cell: ({ row }) => (
         <DevinActionCell
           issueId={row.original.id}
           status={ctx.fixStatuses[row.original.id]}
-          onFix={ctx.onFix}
+          onFix={(id) => ctx.onFix([id])}
         />
       ),
     },
@@ -131,16 +165,18 @@ function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
 interface VulnerabilitiesTableProps {
   issues: VulnerabilityIssue[];
   fixStatuses: Record<number, FixIssueStatus>;
-  onFix: (issueId: number) => void;
+  onFix: (issueIds: number[]) => void;
+  rowSelection: RowSelectionState;
+  onRowSelectionChange: (updater: Updater<RowSelectionState>) => void;
 }
 
 export function VulnerabilitiesTable({
   issues,
   fixStatuses,
   onFix,
+  rowSelection,
+  onRowSelectionChange,
 }: VulnerabilitiesTableProps) {
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-
   const data = useMemo(() => issues, [issues]);
   const columns = useMemo(
     () => buildColumns({ fixStatuses, onFix }),
@@ -151,14 +187,14 @@ export function VulnerabilitiesTable({
     data,
     columns,
     state: { rowSelection },
-    onRowSelectionChange: setRowSelection,
+    onRowSelectionChange,
     getRowId: (row) => String(row.id),
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
     <div className="rounded-lg border border-border-primary bg-elevated">
-      <Table>
+      <Table className="table-fixed">
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow
@@ -168,7 +204,10 @@ export function VulnerabilitiesTable({
               {headerGroup.headers.map((header) => (
                 <TableHead
                   key={header.id}
-                  className="h-10 px-3 text-[12px] font-medium text-text-secondary"
+                  className={cn(
+                    "h-10 px-4 text-[12px] font-medium text-text-secondary",
+                    header.column.columnDef.meta?.className
+                  )}
                 >
                   {header.isPlaceholder
                     ? null
@@ -186,11 +225,10 @@ export function VulnerabilitiesTable({
             <TableRow className="border-border-primary hover:bg-transparent">
               <TableCell
                 colSpan={columns.length}
-                className="h-24 px-3 text-center text-[13px] text-text-secondary"
+                className="h-24 px-4 text-center text-[13px] text-text-secondary"
               >
-                No vulnerabilities yet. Click{" "}
-                <span className="text-text-primary">Sync Vulnerability Issues</span>{" "}
-                to fetch them from GitHub.
+                No vulnerabilities yet. Click the sync button to fetch them
+                from GitHub.
               </TableCell>
             </TableRow>
           ) : (
@@ -203,7 +241,10 @@ export function VulnerabilitiesTable({
                 {row.getVisibleCells().map((cell) => (
                   <TableCell
                     key={cell.id}
-                    className="min-h-[56px] px-3 py-3.5 align-middle"
+                    className={cn(
+                      "min-h-[56px] px-4 py-3.5 align-middle whitespace-normal",
+                      cell.column.columnDef.meta?.className
+                    )}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>

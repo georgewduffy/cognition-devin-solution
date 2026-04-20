@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
 from app.devin.client import DevinClient
-from app.devin.fix_issue import get_status, start_fix
+from app.devin.fix_issue import get_statuses, start_fixes
 from app.devin.models import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -35,28 +35,35 @@ async def create_session(
     )
 
 
-@router.post("/fix_issue", response_model=FixIssueStatus)
+@router.post("/fix_issue", response_model=dict[str, FixIssueStatus])
 async def fix_issue(
     request: FixIssueRequest,
     settings: Settings = Depends(get_settings),
     github: GitHubClient = Depends(get_github_client),
-) -> FixIssueStatus:
-    """Start a Devin session that fixes the given vulnerability issue.
+) -> dict[str, FixIssueStatus]:
+    """Start Devin fix sessions for every id in ``request.issue_ids`` in parallel.
 
-    Returns the initial ``FIXING`` status including ``session_id`` and
-    ``session_url`` so the frontend can link through to the live Devin
-    run while it works. The backend polls the Devin API internally; the
-    client then polls ``GET /devin/fix_issue/{issue_id}`` for updates.
+    Both the per-row *Fix* button and the top-level *Fix All* / *Fix N
+    Vulnerabilities* button hit this endpoint — single-row clicks send
+    a one-element list. Returns a mapping keyed by issue id (as a
+    string, since JSON object keys are strings) containing the initial
+    ``FIXING`` status (or ``NOT_FIXED`` + ``error`` for that particular
+    id on failure) for each id. The backend polls Devin internally;
+    the client polls ``POST /devin/fix_issue/status`` for updates.
     """
-    try:
-        return await start_fix(
-            request.issue_id, settings=settings, github=github
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    result = await start_fixes(
+        request.issue_ids, settings=settings, github=github
+    )
+    return {str(issue_id): status for issue_id, status in result.items()}
 
 
-@router.get("/fix_issue/{issue_id}", response_model=FixIssueStatus)
-async def fix_issue_status(issue_id: int) -> FixIssueStatus:
-    """Report the latest state for a previously-started fix session."""
-    return get_status(issue_id)
+@router.post("/fix_issue/status", response_model=dict[str, FixIssueStatus])
+async def fix_issue_statuses(request: FixIssueRequest) -> dict[str, FixIssueStatus]:
+    """Report the latest state for each id in ``request.issue_ids``.
+
+    Frontend polls this every few seconds for any row currently in the
+    ``FIXING`` state so the cell can flip to ``FIXED`` (with the Devin-
+    created PR URL) as soon as the backend's poller sees it.
+    """
+    result = get_statuses(request.issue_ids)
+    return {str(issue_id): status for issue_id, status in result.items()}

@@ -1,3 +1,7 @@
+import { useCallback, useMemo, useState } from "react";
+import { RefreshCwIcon, Trash2Icon } from "lucide-react";
+import type { RowSelectionState, Updater } from "@tanstack/react-table";
+
 import { useVulnerabilities } from "@/hooks/use-vulnerabilities";
 import { VulnerabilitiesTable } from "./vulnerabilities-table";
 
@@ -5,18 +9,56 @@ export function VulnerabilitiesPage() {
   const { issues, syncStatus, error, fixStatuses, sync, clear, startFix } =
     useVulnerabilities();
 
-  const syncLabel =
-    syncStatus === "loading"
-      ? "Syncing..."
-      : syncStatus === "success"
-        ? "Synced Vulnerabilities"
-        : "Sync Vulnerability Issues";
+  // Selection is lifted up to the page so the *Fix All / Fix N
+  // Vulnerabilities* primary button can reflect the current selection
+  // count in its label. We clear selection whenever the user clicks the
+  // trash button so the counter matches the (now-empty) table.
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const syncClasses =
-    "inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] font-medium text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer " +
+  const handleRowSelectionChange = useCallback(
+    (updater: Updater<RowSelectionState>) => {
+      setRowSelection((prev) =>
+        typeof updater === "function" ? updater(prev) : updater
+      );
+    },
+    []
+  );
+
+  const handleClear = useCallback(() => {
+    clear();
+    setRowSelection({});
+  }, [clear]);
+
+  const selectedIds = useMemo(() => {
+    const ids: number[] = [];
+    for (const issue of issues) {
+      if (rowSelection[String(issue.id)]) {
+        ids.push(issue.id);
+      }
+    }
+    return ids;
+  }, [issues, rowSelection]);
+
+  const selectedCount = selectedIds.length;
+  const totalCount = issues.length;
+  // "Fix All" when zero or every row is selected; otherwise "Fix N
+  // Vulnerabilities". Matches the product spec.
+  const isFixAll = selectedCount === 0 || selectedCount === totalCount;
+  const fixLabel = isFixAll
+    ? "Fix All"
+    : `Fix ${selectedCount} Vulnerabilit${selectedCount === 1 ? "y" : "ies"}`;
+
+  const handleFixIssues = useCallback(() => {
+    const targetIds = isFixAll ? issues.map((i) => i.id) : selectedIds;
+    if (targetIds.length === 0) return;
+    void startFix(targetIds);
+  }, [isFixAll, issues, selectedIds, startFix]);
+
+  const syncClassName =
+    "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border-primary bg-transparent text-text-secondary transition-colors hover:text-text-primary hover:bg-hover-fill disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer " +
     (syncStatus === "success"
-      ? "bg-brand-green hover:bg-brand-green/90"
-      : "bg-brand-blue hover:bg-brand-blue/90");
+      ? "text-brand-green hover:text-brand-green border-brand-green/40"
+      : "");
 
   return (
     <div className="flex-1 overflow-auto">
@@ -31,7 +73,7 @@ export function VulnerabilitiesPage() {
               codebase.
             </p>
           </div>
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex items-center gap-2 pt-1">
             {error && (
               <span className="text-destructive font-medium text-[12px]">
                 Error: {error}
@@ -39,19 +81,41 @@ export function VulnerabilitiesPage() {
             )}
             <button
               type="button"
-              onClick={clear}
+              onClick={handleClear}
               disabled={issues.length === 0}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-border-primary bg-transparent px-3 text-[13px] font-medium text-text-secondary transition-colors hover:text-text-primary hover:bg-hover-fill disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              title="Clear vulnerabilities"
+              aria-label="Clear vulnerabilities"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border-primary bg-transparent text-text-secondary transition-colors hover:text-text-primary hover:bg-hover-fill disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              Clear Vulnerabilities
+              <Trash2Icon className="size-4" aria-hidden />
             </button>
             <button
               type="button"
               onClick={sync}
               disabled={syncStatus === "loading"}
-              className={syncClasses}
+              title={
+                syncStatus === "success"
+                  ? "Synced"
+                  : "Sync vulnerability issues"
+              }
+              aria-label="Sync vulnerability issues"
+              className={syncClassName}
             >
-              {syncLabel}
+              <RefreshCwIcon
+                className={
+                  "size-4 " +
+                  (syncStatus === "loading" ? "animate-spin" : "")
+                }
+                aria-hidden
+              />
+            </button>
+            <button
+              type="button"
+              onClick={handleFixIssues}
+              disabled={issues.length === 0}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-brand-blue px-3 text-[13px] font-medium text-white transition-colors hover:bg-brand-blue/90 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {fixLabel}
             </button>
           </div>
         </div>
@@ -63,6 +127,8 @@ export function VulnerabilitiesPage() {
             issues={issues}
             fixStatuses={fixStatuses}
             onFix={startFix}
+            rowSelection={rowSelection}
+            onRowSelectionChange={handleRowSelectionChange}
           />
         </div>
       </div>

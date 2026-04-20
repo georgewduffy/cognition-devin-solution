@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DevinActionState,
-  fetchFixIssueStatus,
+  fetchFixIssueStatuses,
   fetchVulnerabilities,
-  startFixIssue,
+  startFixIssues,
   type FixIssueStatus,
   type VulnerabilityIssue,
 } from "@/api/client";
@@ -51,24 +51,14 @@ export function useVulnerabilities() {
       // per-row selection/DOM identity across renders.
       setIssues(data);
 
-      // Hydrate Devin fix status for each synced issue so a page reload
-      // (or a re-sync after a backend restart reconnect) still shows
-      // FIXED/FIXING rows correctly rather than defaulting to NOT_FIXED.
-      const hydrated = await Promise.all(
-        data.map((issue) =>
-          fetchFixIssueStatus(issue.id).catch(() => null as FixIssueStatus | null)
-        )
-      );
-      setFixStatuses((prev) => {
-        const next: Record<number, FixIssueStatus> = { ...prev };
-        data.forEach((issue, i) => {
-          const status = hydrated[i];
-          if (status) {
-            next[issue.id] = status;
-          }
-        });
-        return next;
-      });
+      // Hydrate Devin fix status for every synced issue in a single
+      // batch request so a page reload (or a re-sync after a backend
+      // reconnect) still shows FIXED/FIXING rows correctly rather than
+      // defaulting to NOT_FIXED.
+      const hydrated = await fetchFixIssueStatuses(
+        data.map((issue) => issue.id)
+      ).catch(() => ({} as Record<number, FixIssueStatus>));
+      setFixStatuses((prev) => ({ ...prev, ...hydrated }));
 
       setSyncStatus("success");
       successTimerRef.current = setTimeout(() => {
@@ -95,22 +85,53 @@ export function useVulnerabilities() {
     // longer appear upstream are simply never read.
   }, []);
 
-  const startFix = useCallback(async (issueId: number) => {
-    setFixStatuses((prev) => ({
-      ...prev,
-      [issueId]: emptyStatus(issueId, DevinActionState.REQUEST_SENT),
-    }));
+  const startFix = useCallback(async (issueIds: number[]) => {
+    if (issueIds.length === 0) return;
+    // Optimistically flip every requested row to REQUEST_SENT so the
+    // cell changes the moment the user clicks — the backend can then
+    // take multiple seconds to create each Devin session.
+    setFixStatuses((prev) => {
+      const next = { ...prev };
+      for (const id of issueIds) {
+        next[id] = emptyStatus(id, DevinActionState.REQUEST_SENT);
+      }
+      return next;
+    });
     try {
-      const status = await startFixIssue(issueId);
-      setFixStatuses((prev) => ({ ...prev, [issueId]: status }));
+      const statuses = await startFixIssues(issueIds);
+      setFixStatuses((prev) => {
+        const next = { ...prev };
+        for (const id of issueIds) {
+          const status = statuses[id];
+          if (status) {
+            next[id] = status;
+          } else {
+            // Backend didn't return an entry for this id — unexpected,
+            // but safest to drop it back to NOT_FIXED rather than leave
+            // it stuck spinning on REQUEST_SENT forever.
+            next[id] = {
+              ...emptyStatus(id, DevinActionState.NOT_FIXED),
+              error: "No status returned from backend",
+            };
+          }
+        }
+        return next;
+      });
     } catch (err) {
-      setFixStatuses((prev) => ({
-        ...prev,
-        [issueId]: {
-          ...emptyStatus(issueId, DevinActionState.NOT_FIXED),
-          error: err instanceof Error ? err.message : "Unknown error",
-        },
-      }));
+      const message = err instanceof Error ? err.message : "Unknown error";
+      // Network / 5xx failure: revert every optimistically-flipped row
+      // back to NOT_FIXED and attach the error message so the user
+      // gets a tooltip.
+      setFixStatuses((prev) => {
+        const next = { ...prev };
+        for (const id of issueIds) {
+          next[id] = {
+            ...emptyStatus(id, DevinActionState.NOT_FIXED),
+            error: message,
+          };
+        }
+        return next;
+      });
     }
   }, []);
 
@@ -131,19 +152,11 @@ export function useVulnerabilities() {
     const ids = activePollKey.split(",").map(Number);
     let cancelled = false;
     const interval = setInterval(async () => {
-      const results = await Promise.all(
-        ids.map((id) =>
-          fetchFixIssueStatus(id).catch(() => null as FixIssueStatus | null)
-        )
+      const results = await fetchFixIssueStatuses(ids).catch(
+        () => ({} as Record<number, FixIssueStatus>)
       );
       if (cancelled) return;
-      setFixStatuses((prev) => {
-        const next = { ...prev };
-        results.forEach((status, i) => {
-          if (status) next[ids[i]] = status;
-        });
-        return next;
-      });
+      setFixStatuses((prev) => ({ ...prev, ...results }));
     }, FIX_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
