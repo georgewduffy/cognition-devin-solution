@@ -67,4 +67,5 @@ class FixIssueStatus(BaseModel):
     session_id: str | None = None
     session_url: str | None = None
     pr_url: str | None = None
+    acus_consumed: float | None = None
     error: str | None = None

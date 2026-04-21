@@ -39,6 +39,11 @@ class VulnerabilityIssue(BaseModel):
     html_url: str
     labels: list[str] = Field(default_factory=list)
     vulnerability_type: str | None = None
+    linked_pr_number: int | None = None
+    linked_pr_url: str | None = None
+    linked_pr_state: str | None = None
+    open_pr_number: int | None = None
+    open_pr_url: str | None = None
 
 
 class WebhookAck(BaseModel):

@@ -26,6 +26,11 @@ export interface VulnerabilityIssue {
   html_url: string;
   labels: string[];
   vulnerability_type: string | null;
+  linked_pr_number: number | null;
+  linked_pr_url: string | null;
+  linked_pr_state: string | null;
+  open_pr_number: number | null;
+  open_pr_url: string | null;
 }
 
 /**
@@ -55,6 +60,7 @@ export interface FixIssueStatus {
   session_id: string | null;
   session_url: string | null;
   pr_url: string | null;
+  acus_consumed: number | null;
   error: string | null;
 }
 
@@ -100,6 +106,18 @@ export async function fetchVulnerabilities(): Promise<VulnerabilityIssue[]> {
     throw new Error(await parseError(res));
   }
   return res.json();
+}
+
+export function subscribeGitHubWebhookEvents(onEvent: () => void): () => void {
+  const source = new EventSource(`${API_BASE}/github/webhook/events`);
+  const listener = () => onEvent();
+
+  source.addEventListener("github-webhook", listener);
+
+  return () => {
+    source.removeEventListener("github-webhook", listener);
+    source.close();
+  };
 }
 
 /**

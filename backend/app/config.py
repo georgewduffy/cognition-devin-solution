@@ -7,6 +7,9 @@ class Settings(BaseSettings):
 
     devin_api_key: SecretStr = Field(..., alias="DEVIN_API_KEY")
     devin_org_id: str = Field(..., alias="DEVIN_ORG_ID")
+    devin_create_as_user_id: str | None = Field(
+        None, alias="DEVIN_CREATE_AS_USER_ID"
+    )
     devin_api_base_url: str = Field(
         "https://api.devin.ai/v3", alias="DEVIN_API_BASE_URL"
     )

@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { getEffectiveFixStatus } from "@/lib/vulnerability-status";
 
 declare module "@tanstack/react-table" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -34,13 +35,32 @@ declare module "@tanstack/react-table" {
 
 function TypeBadge({ label }: { label: string | null }) {
   if (!label) {
-    return <span className="text-text-disabled">—</span>;
+    return null;
   }
   return (
     <span className="inline-flex items-center rounded-md border border-border-primary bg-hover-fill px-2 py-0.5 font-mono text-[11px] tracking-wide text-text-secondary">
       {label}
     </span>
   );
+}
+
+const loaderClassName =
+  "size-3.5 animate-spin text-brand-blue/90 [animation-duration:1.8s]";
+
+function formatAcus(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return null;
+  }
+  if (value > 0 && value < 0.01) {
+    return "<0.01 ACUs";
+  }
+  if (value < 10) {
+    return `${value.toFixed(2)} ACUs`;
+  }
+  if (value < 100) {
+    return `${value.toFixed(1)} ACUs`;
+  }
+  return `${Math.round(value)} ACUs`;
 }
 
 function StatusBadge({ status }: { status: FixIssueStatus | undefined }) {
@@ -56,24 +76,53 @@ function StatusBadge({ status }: { status: FixIssueStatus | undefined }) {
       );
     case DevinActionState.REQUEST_SENT:
       return (
-        <span className="inline-flex items-center gap-1.5 text-[13px] text-text-secondary">
-          <LoaderIcon
-            className="size-3.5 animate-spin text-brand-blue"
-            aria-hidden
-          />
-          Setting up Devin session
+        <span className="inline-flex min-w-max items-center justify-end gap-1.5 text-[13px] text-text-secondary">
+          <LoaderIcon className={loaderClassName} aria-hidden />
+          Waking Devin up
         </span>
       );
-    case DevinActionState.FIXING:
+    case DevinActionState.FIXING: {
+      const acusText = formatAcus(status?.acus_consumed);
+      const workingText = (
+        <>
+          <span className="text-text-primary group-hover:underline">
+            Working
+          </span>
+          {acusText ? (
+            <span
+              className="text-text-secondary"
+              title={
+                status?.acus_consumed === null ||
+                status?.acus_consumed === undefined
+                  ? undefined
+                  : `${status.acus_consumed} ACUs consumed`
+              }
+            >
+              {acusText}
+            </span>
+          ) : null}
+        </>
+      );
       return (
-        <span className="inline-flex items-center gap-1.5 text-[13px] text-text-primary">
-          <LoaderIcon
-            className="size-3.5 animate-spin text-brand-blue"
-            aria-hidden
-          />
-          Fixing
+        <span className="inline-flex min-w-max items-center justify-end gap-1.5 text-[13px]">
+          <LoaderIcon className={loaderClassName} aria-hidden />
+          {status?.session_url ? (
+            <a
+              href={status.session_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="group inline-flex items-center gap-1.5 underline-offset-4"
+            >
+              {workingText}
+            </a>
+          ) : (
+            <span className="group inline-flex items-center gap-1.5">
+              {workingText}
+            </span>
+          )}
         </span>
       );
+    }
     case DevinActionState.FIXED:
       return (
         <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[12px] font-medium bg-brand-purple/15 text-brand-purple">
@@ -113,7 +162,7 @@ function RowAction({
         type="button"
         onClick={onResolve}
         title={error ? `Previous attempt failed: ${error}` : undefined}
-        className="inline-flex h-7 items-center justify-center rounded-md bg-brand-blue px-2.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-blue/90 cursor-pointer"
+        className="inline-flex items-center justify-center text-[12px] font-medium text-white underline-offset-4 transition-colors hover:underline cursor-pointer"
       >
         Resolve
       </button>
@@ -126,16 +175,14 @@ function RowAction({
         href={fixStatus.pr_url}
         target="_blank"
         rel="noreferrer noopener"
-        className="inline-flex h-7 items-center justify-center rounded-md bg-brand-purple px-2.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-purple/90"
+        className="inline-flex items-center justify-center text-[12px] font-medium text-white underline-offset-4 transition-colors hover:underline"
       >
         Review
       </a>
     );
   }
 
-  return (
-    <span className="text-text-disabled text-[14px] select-none">—</span>
-  );
+  return null;
 }
 
 interface RowContext {
@@ -171,36 +218,35 @@ function buildColumns(ctx: RowContext): ColumnDef<VulnerabilityIssue>[] {
     },
     {
       accessorKey: "title",
-      header: "Name",
-      meta: { className: "w-1/3 min-w-[280px]" },
+      header: "Issue",
+      meta: { className: "w-auto min-w-[320px] whitespace-normal" },
       cell: ({ row }) => {
-        const { html_url, title, number } = row.original;
+        const { html_url, title, number, vulnerability_type } = row.original;
         return (
-          <a
-            href={html_url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="block truncate text-text-primary hover:underline"
-            title={title}
-          >
-            <span className="text-text-secondary">#{number}</span>{" "}
-            <span>{title}</span>
-          </a>
+          <div className="flex flex-col items-start gap-2">
+            <a
+              href={html_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="block whitespace-normal break-words leading-5 text-text-primary hover:underline"
+              title={title}
+            >
+              <span className="text-text-secondary">#{number}</span>{" "}
+              <span>{title}</span>
+            </a>
+            <TypeBadge label={vulnerability_type} />
+          </div>
         );
       },
     },
     {
-      accessorKey: "vulnerability_type",
-      header: "Type",
-      meta: { className: "min-w-[180px]" },
-      cell: ({ row }) => <TypeBadge label={row.original.vulnerability_type} />,
-    },
-    {
       id: "status",
       header: "Status",
-      meta: { className: "min-w-[220px]" },
+      meta: { className: "w-1/5 min-w-[220px] text-right" },
       cell: ({ row }) => (
-        <StatusBadge status={ctx.fixStatuses[row.original.id]} />
+        <StatusBadge
+          status={getEffectiveFixStatus(row.original, ctx.fixStatuses)}
+        />
       ),
     },
   ];
@@ -221,7 +267,10 @@ export function VulnerabilitiesTable({
   rowSelection,
   onRowSelectionChange,
 }: VulnerabilitiesTableProps) {
-  const data = useMemo(() => issues, [issues]);
+  const data = useMemo(
+    () => [...issues].sort((a, b) => a.number - b.number),
+    [issues]
+  );
   const columns = useMemo(
     () => buildColumns({ fixStatuses }),
     [fixStatuses]
@@ -254,7 +303,7 @@ export function VulnerabilitiesTable({
   const rows = table.getRowModel().rows;
 
   return (
-    <div className="grid grid-cols-[1fr_auto] items-start">
+    <div className="grid grid-cols-[minmax(0,1fr)_4rem] items-start gap-3">
       <div
         ref={wrapperRef}
         className="rounded-lg border border-border-primary bg-elevated"
@@ -307,7 +356,7 @@ export function VulnerabilitiesTable({
                     <TableCell
                       key={cell.id}
                       className={cn(
-                        "h-14 px-4 py-3.5 align-middle",
+                        "h-20 px-4 py-4 align-middle",
                         cell.column.columnDef.meta?.className
                       )}
                     >
@@ -324,16 +373,16 @@ export function VulnerabilitiesTable({
         </Table>
       </div>
       {rows.length > 0 && (
-        <div className="flex flex-col pl-3">
+        <div className="flex flex-col">
           <div style={{ height: headerH }} />
           {rows.map((row, i) => (
             <div
               key={row.id}
               className="flex items-center"
-              style={{ height: rowHs[i] ?? 57 }}
+              style={{ height: rowHs[i] ?? 81 }}
             >
               <RowAction
-                fixStatus={fixStatuses[row.original.id]}
+                fixStatus={getEffectiveFixStatus(row.original, fixStatuses)}
                 onResolve={() => onFix([row.original.id])}
               />
             </div>

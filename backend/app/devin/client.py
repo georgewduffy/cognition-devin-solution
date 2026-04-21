@@ -17,6 +17,7 @@ class DevinClient:
 
     def __init__(self, settings: Settings, timeout: float = 30.0):
         self._org_id = settings.devin_org_id
+        self._create_as_user_id = settings.devin_create_as_user_id
         self._client = httpx.AsyncClient(
             base_url=settings.devin_api_base_url,
             headers={
@@ -43,11 +44,15 @@ class DevinClient:
         return resp.json()
 
     async def create_session(
-        self, prompt: str, *, idempotent: bool = True, **extra: Any
+        self, prompt: str, *, idempotent: bool | None = None, **extra: Any
     ) -> dict[str, Any]:
         """Start a new Devin session with the given prompt."""
-        payload: dict[str, Any] = {"prompt": prompt, "idempotent": idempotent}
-        payload.update(extra)
+        payload: dict[str, Any] = {"prompt": prompt}
+        if self._create_as_user_id:
+            payload["create_as_user_id"] = self._create_as_user_id
+        payload.update(
+            {key: value for key, value in extra.items() if value is not None}
+        )
         resp = await self._client.post(self._org_path("/sessions"), json=payload)
         resp.raise_for_status()
         return resp.json()

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from typing import Any
 
@@ -192,6 +193,7 @@ async def _start_one(
         state=DevinActionState.FIXING,
         session_id=session_id or None,
         session_url=session_url,
+        acus_consumed=_parse_acus(raw_session.get("acus_consumed")),
     )
     async with _LOCK:
         _REGISTRY[issue_id] = status
@@ -239,6 +241,7 @@ async def _poll_session(
                 return
 
             status_str: str = raw.get("status") or ""
+            acus_consumed = _parse_acus(raw.get("acus_consumed"))
             pull_requests = raw.get("pull_requests") or []
             pr_url = _first_pr_url(pull_requests)
 
@@ -250,6 +253,7 @@ async def _poll_session(
                         session_id=session_id,
                         session_url=raw.get("url"),
                         pr_url=pr_url,
+                        acus_consumed=acus_consumed,
                     )
                 )
                 return
@@ -271,6 +275,7 @@ async def _poll_session(
                     state=DevinActionState.FIXING,
                     session_id=session_id,
                     session_url=raw.get("url"),
+                    acus_consumed=acus_consumed,
                 )
             )
 
@@ -305,35 +310,49 @@ def _parse_pr_url(url: str) -> int | None:
 
 
 async def check_and_promote_fixed(
-    issue_ids: list[int], github: GitHubClient
+    issue_ids: list[int], github: GitHubClient, settings: Settings
 ) -> dict[int, FixIssueStatus]:
     """Return current statuses, promoting FIXED to RESOLVED when the PR is merged."""
     result: dict[int, FixIssueStatus] = {}
-    for iid in issue_ids:
-        status = get_status(iid)
-        if status.state is DevinActionState.FIXED and status.pr_url:
-            pr_number = _parse_pr_url(status.pr_url)
-            if pr_number is not None:
-                try:
-                    pr_data = await github.get_pull_request(pr_number)
-                    if pr_data.get("merged"):
-                        status = FixIssueStatus(
-                            issue_id=iid,
-                            state=DevinActionState.RESOLVED,
-                            session_id=status.session_id,
-                            session_url=status.session_url,
-                            pr_url=status.pr_url,
+    devin: DevinClient | None = None
+    try:
+        for iid in issue_ids:
+            status = get_status(iid)
+            if (
+                status.session_id
+                and status.state in {DevinActionState.FIXING, DevinActionState.FIXED}
+            ):
+                if devin is None:
+                    devin = DevinClient(settings)
+                status = await _refresh_from_devin(status, devin)
+
+            if status.state is DevinActionState.FIXED and status.pr_url:
+                pr_number = _parse_pr_url(status.pr_url)
+                if pr_number is not None:
+                    try:
+                        pr_data = await github.get_pull_request(pr_number)
+                        if pr_data.get("merged"):
+                            status = FixIssueStatus(
+                                issue_id=iid,
+                                state=DevinActionState.RESOLVED,
+                                session_id=status.session_id,
+                                session_url=status.session_url,
+                                pr_url=status.pr_url,
+                                acus_consumed=status.acus_consumed,
+                            )
+                            async with _LOCK:
+                                _REGISTRY[iid] = status
+                    except Exception:
+                        logger.debug(
+                            "pr_merge_check_failed issue_id=%s pr_url=%s",
+                            iid,
+                            status.pr_url,
                         )
-                        async with _LOCK:
-                            _REGISTRY[iid] = status
-                except Exception:
-                    logger.debug(
-                        "pr_merge_check_failed issue_id=%s pr_url=%s",
-                        iid,
-                        status.pr_url,
-                    )
-        result[iid] = status
-    return result
+            result[iid] = status
+        return result
+    finally:
+        if devin is not None:
+            await devin.aclose()
 
 
 def _first_pr_url(pull_requests: list[dict[str, Any]]) -> str | None:
@@ -342,6 +361,59 @@ def _first_pr_url(pull_requests: list[dict[str, Any]]) -> str | None:
         if url:
             return url
     return None
+
+
+async def _refresh_from_devin(
+    status: FixIssueStatus, client: DevinClient
+) -> FixIssueStatus:
+    if not status.session_id:
+        return status
+    try:
+        raw = await client.get_session(status.session_id)
+    except Exception:
+        logger.debug(
+            "devin_status_refresh_failed issue_id=%s session_id=%s",
+            status.issue_id,
+            status.session_id,
+        )
+        return status
+
+    status_str: str = raw.get("status") or ""
+    pr_url = _first_pr_url(raw.get("pull_requests") or []) or status.pr_url
+    refreshed = FixIssueStatus(
+        issue_id=status.issue_id,
+        state=DevinActionState.FIXED if pr_url else status.state,
+        session_id=status.session_id,
+        session_url=raw.get("url") or status.session_url,
+        pr_url=pr_url,
+        acus_consumed=_parse_acus(raw.get("acus_consumed")),
+        error=status.error,
+    )
+    if status_str in _TERMINAL_STATUSES and not pr_url:
+        refreshed = FixIssueStatus(
+            issue_id=status.issue_id,
+            state=DevinActionState.NOT_FIXED,
+            session_id=status.session_id,
+            session_url=raw.get("url") or status.session_url,
+            acus_consumed=refreshed.acus_consumed,
+            error=(
+                f"Devin session ended ({status_str}, "
+                f"{raw.get('status_detail') or status_str}) without a pull request"
+            ),
+        )
+
+    await _set_status(refreshed)
+    return refreshed
+
+
+def _parse_acus(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 async def _set_status(status: FixIssueStatus) -> None:

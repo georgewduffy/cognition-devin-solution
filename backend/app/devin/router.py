@@ -60,6 +60,7 @@ async def fix_issue(
 @router.post("/fix_issue/status", response_model=dict[str, FixIssueStatus])
 async def fix_issue_statuses(
     request: FixIssueRequest,
+    settings: Settings = Depends(get_settings),
     github: GitHubClient = Depends(get_github_client),
 ) -> dict[str, FixIssueStatus]:
     """Report the latest state for each id in ``request.issue_ids``.
@@ -69,5 +70,5 @@ async def fix_issue_statuses(
     checks whether the associated PR has been merged and promotes to
     ``RESOLVED`` when it has.
     """
-    result = await check_and_promote_fixed(request.issue_ids, github)
+    result = await check_and_promote_fixed(request.issue_ids, github, settings)
     return {str(issue_id): status for issue_id, status in result.items()}

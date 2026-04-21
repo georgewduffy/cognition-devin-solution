@@ -4,6 +4,7 @@ import {
   fetchFixIssueStatuses,
   fetchVulnerabilities,
   startFixIssues,
+  subscribeGitHubWebhookEvents,
   type FixIssueStatus,
   type VulnerabilityIssue,
 } from "@/api/client";
@@ -13,6 +14,10 @@ const FIX_POLL_INTERVAL_MS = 4000;
 
 export type SyncStatus = "idle" | "loading" | "success";
 
+interface SyncOptions {
+  silent?: boolean;
+}
+
 function emptyStatus(issueId: number, state: DevinActionState): FixIssueStatus {
   return {
     issue_id: issueId,
@@ -20,6 +25,7 @@ function emptyStatus(issueId: number, state: DevinActionState): FixIssueStatus {
     session_id: null,
     session_url: null,
     pr_url: null,
+    acus_consumed: null,
     error: null,
   };
 }
@@ -33,13 +39,16 @@ export function useVulnerabilities() {
   >({});
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const sync = useCallback(async () => {
+  const sync = useCallback(async (options?: SyncOptions) => {
+    const silent = options?.silent === true;
     if (successTimerRef.current) {
       clearTimeout(successTimerRef.current);
       successTimerRef.current = null;
     }
-    setSyncStatus("loading");
-    setError(null);
+    if (!silent) {
+      setSyncStatus("loading");
+      setError(null);
+    }
     try {
       const data = await fetchVulnerabilities();
       // The backend returns the authoritative full set of current
@@ -60,14 +69,18 @@ export function useVulnerabilities() {
       ).catch(() => ({} as Record<number, FixIssueStatus>));
       setFixStatuses((prev) => ({ ...prev, ...hydrated }));
 
-      setSyncStatus("success");
-      successTimerRef.current = setTimeout(() => {
-        setSyncStatus("idle");
-        successTimerRef.current = null;
-      }, SUCCESS_DURATION_MS);
+      if (!silent) {
+        setSyncStatus("success");
+        successTimerRef.current = setTimeout(() => {
+          setSyncStatus("idle");
+          successTimerRef.current = null;
+        }, SUCCESS_DURATION_MS);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-      setSyncStatus("idle");
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+        setSyncStatus("idle");
+      }
     }
   }, []);
 
@@ -167,6 +180,12 @@ export function useVulnerabilities() {
       clearInterval(interval);
     };
   }, [activePollKey]);
+
+  useEffect(() => {
+    return subscribeGitHubWebhookEvents(() => {
+      void sync({ silent: true });
+    });
+  }, [sync]);
 
   return { issues, syncStatus, error, fixStatuses, sync, clear, startFix };
 }

@@ -93,6 +93,37 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def find_linked_pull_request_for_issue(
+        self,
+        number: int,
+        per_page: int = 100,
+    ) -> dict[str, Any] | None:
+        """Return a linked PR from an issue's timeline, preferring open PRs."""
+        page = 1
+        first_linked_pr: dict[str, Any] | None = None
+        while True:
+            resp = await self._client.get(
+                f"/repos/{self.owner}/{self.repo}/issues/{number}/timeline",
+                params={"per_page": per_page, "page": page},
+            )
+            resp.raise_for_status()
+            batch = resp.json()
+            if not batch:
+                return first_linked_pr
+
+            for event in batch:
+                pr = self._linked_pr_from_timeline_event(event)
+                if pr is None:
+                    continue
+                if pr.get("state") == "open":
+                    return pr
+                if first_linked_pr is None:
+                    first_linked_pr = pr
+
+            if len(batch) < per_page:
+                return first_linked_pr
+            page += 1
+
     async def list_issues_by_label(
         self,
         label: str,
@@ -126,3 +157,30 @@ class GitHubClient:
                 break
             page += 1
         return issues
+
+    @staticmethod
+    def _linked_pr_from_timeline_event(event: dict[str, Any]) -> dict[str, Any] | None:
+        candidates: list[dict[str, Any]] = []
+        source = event.get("source")
+        if isinstance(source, dict) and isinstance(source.get("issue"), dict):
+            candidates.append(source["issue"])
+
+        for key in ("subject", "pull_request"):
+            value = event.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+
+        for candidate in candidates:
+            html_url = candidate.get("html_url")
+            is_pull_request = "pull_request" in candidate or (
+                isinstance(html_url, str) and "/pull/" in html_url
+            )
+            if not is_pull_request:
+                continue
+            return {
+                "number": candidate.get("number"),
+                "html_url": html_url,
+                "state": candidate.get("state"),
+            }
+
+        return None
