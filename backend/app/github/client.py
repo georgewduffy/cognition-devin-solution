@@ -85,6 +85,14 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_pull_request(self, number: int) -> dict[str, Any]:
+        """Fetch a pull request by number from the configured repo."""
+        resp = await self._client.get(
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}"
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def list_issues_by_label(
         self,
         label: str,

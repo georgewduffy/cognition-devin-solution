@@ -36,18 +36,21 @@ class DevinActionState(str, Enum):
     REQUEST_SENT = "REQUEST_SENT"
     FIXING = "FIXING"
     FIXED = "FIXED"
+    RESOLVED = "RESOLVED"
 
 
 class FixIssueRequest(BaseModel):
-    """Client request to start a Devin fix session for a specific issue.
+    """Client request covering one or more Devin fix sessions in a batch.
 
-    ``issue_id`` is the GitHub issue's global numeric id, which is stable
-    across label/title/state changes. The backend resolves it back to a
-    vulnerability issue so the prompt can embed the issue's title, body
-    and URL.
+    Used both for ``POST /devin/fix_issue`` (create sessions) and for
+    ``POST /devin/fix_issue/status`` (batch poll). ``issue_ids`` holds the
+    GitHub issue global numeric ids, which are stable across
+    label/title/state changes. The single-row *Fix* button sends a list
+    of length 1; the top-level *Fix All* / *Fix N Vulnerabilities*
+    button sends the selected (or full) set.
     """
 
-    issue_id: int
+    issue_ids: list[int]
 
 
 class FixIssueStatus(BaseModel):
