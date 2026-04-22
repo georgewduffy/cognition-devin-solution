@@ -64,6 +64,10 @@ export interface FixIssueStatus {
   error: string | null;
 }
 
+export interface AutoResolveState {
+  enabled: boolean;
+}
+
 async function parseError(res: Response): Promise<string> {
   let detail = res.statusText;
   try {
@@ -118,6 +122,28 @@ export function subscribeGitHubWebhookEvents(onEvent: () => void): () => void {
     source.removeEventListener("github-webhook", listener);
     source.close();
   };
+}
+
+export async function fetchAutoResolveState(): Promise<AutoResolveState> {
+  const res = await fetch(`${API_BASE}/devin/auto_resolve`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res.json();
+}
+
+export async function updateAutoResolveState(
+  enabled: boolean
+): Promise<AutoResolveState> {
+  const res = await fetch(`${API_BASE}/devin/auto_resolve`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res.json();
 }
 
 /**

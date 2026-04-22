@@ -3,9 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
+from app.devin.auto_resolve import (
+    get_auto_resolve_enabled,
+    set_auto_resolve_enabled,
+)
 from app.devin.client import DevinClient
 from app.devin.fix_issue import check_and_promote_fixed, get_statuses, start_fixes
 from app.devin.models import (
+    AutoResolveState,
     CreateSessionRequest,
     CreateSessionResponse,
     FixIssueRequest,
@@ -33,6 +38,17 @@ async def create_session(
         session_id=raw.get("session_id") or raw.get("id", ""),
         url=raw.get("url"),
     )
+
+
+@router.get("/auto_resolve", response_model=AutoResolveState)
+async def get_auto_resolve() -> AutoResolveState:
+    return AutoResolveState(enabled=await get_auto_resolve_enabled())
+
+
+@router.put("/auto_resolve", response_model=AutoResolveState)
+async def update_auto_resolve(request: AutoResolveState) -> AutoResolveState:
+    enabled = await set_auto_resolve_enabled(request.enabled)
+    return AutoResolveState(enabled=enabled)
 
 
 @router.post("/fix_issue", response_model=dict[str, FixIssueStatus])

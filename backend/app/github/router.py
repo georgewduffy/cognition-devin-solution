@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import Settings, get_settings
+from app.devin.auto_resolve import get_auto_resolve_enabled
+from app.devin.fix_issue import mark_fix_failed, reserve_fix, start_fixes
 from app.github.client import GitHubClient
 from app.github.models import (
     CreateIssueRequest,
@@ -153,6 +155,12 @@ async def webhook(
         number,
         x_github_delivery,
     )
+    await _maybe_auto_resolve_issue(
+        event=x_github_event,
+        action=action,
+        payload=payload,
+        settings=settings,
+    )
     if _should_refresh_vulnerabilities(x_github_event, action):
         _publish_webhook_update(
             event=x_github_event or "unknown",
@@ -167,6 +175,72 @@ async def webhook(
         issue_number=number,
         delivery_id=x_github_delivery,
     )
+
+
+async def _maybe_auto_resolve_issue(
+    *,
+    event: str | None,
+    action: str | None,
+    payload: dict[str, Any],
+    settings: Settings,
+) -> None:
+    if not await get_auto_resolve_enabled():
+        return
+    issue_id = _auto_resolvable_issue_id(event, action, payload)
+    if issue_id is None:
+        return
+
+    reserved = await reserve_fix(issue_id)
+    if reserved is None:
+        logger.info(
+            "github_webhook_auto_resolve_skip issue_id=%s reason=already_started",
+            issue_id,
+        )
+        return
+
+    logger.info("github_webhook_auto_resolve_start issue_id=%s", issue_id)
+    asyncio.create_task(_start_auto_resolve_issue(issue_id, settings))
+
+
+def _auto_resolvable_issue_id(
+    event: str | None, action: str | None, payload: dict[str, Any]
+) -> int | None:
+    if event != "issues" or action not in {"opened", "labeled"}:
+        return None
+
+    issue = payload.get("issue")
+    if not isinstance(issue, dict):
+        return None
+    if issue.get("state") != "open":
+        return None
+    if not _has_vulnerability_label(issue):
+        return None
+
+    issue_id = issue.get("id")
+    return issue_id if isinstance(issue_id, int) else None
+
+
+def _has_vulnerability_label(issue: dict[str, Any]) -> bool:
+    labels = issue.get("labels") or []
+    for label in labels:
+        if isinstance(label, dict) and label.get("name") == VULNERABILITY_LABEL:
+            return True
+    return False
+
+
+async def _start_auto_resolve_issue(issue_id: int, settings: Settings) -> None:
+    github = GitHubClient(settings)
+    try:
+        await start_fixes([issue_id], settings=settings, github=github)
+    except Exception as exc:  # noqa: BLE001 - keep background task failures visible in-row
+        logger.warning(
+            "github_webhook_auto_resolve_error issue_id=%s exc=%s",
+            issue_id,
+            exc,
+        )
+        await mark_fix_failed(issue_id, str(exc))
+    finally:
+        await github.aclose()
 
 
 def _should_refresh_vulnerabilities(event: str | None, action: str | None) -> bool:

@@ -15,6 +15,10 @@ class CreateSessionResponse(BaseModel):
     url: str | None = None
 
 
+class AutoResolveState(BaseModel):
+    enabled: bool
+
+
 class SessionInfo(BaseModel):
     session_id: str
     status: str | None = None

@@ -157,6 +157,7 @@ export function useVulnerabilities() {
       .filter(
         (s) =>
           s.state === DevinActionState.FIXING ||
+          s.state === DevinActionState.REQUEST_SENT ||
           s.state === DevinActionState.FIXED
       )
       .map((s) => s.issue_id)

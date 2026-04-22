@@ -45,6 +45,12 @@ POLL_INTERVAL_SECONDS = 5.0
 POLL_TIMEOUT_SECONDS = 60 * 60  # 1 hour upper bound; keeps the task from leaking forever.
 
 _TERMINAL_STATUSES = {"exit", "error", "suspended"}
+_NON_STARTABLE_STATES = {
+    DevinActionState.REQUEST_SENT,
+    DevinActionState.FIXING,
+    DevinActionState.FIXED,
+    DevinActionState.RESOLVED,
+}
 
 _REGISTRY: dict[int, FixIssueStatus] = {}
 _TASKS: dict[int, asyncio.Task[None]] = {}
@@ -70,6 +76,26 @@ def get_statuses(issue_ids: list[int]) -> dict[int, FixIssueStatus]:
     as ``NOT_FIXED`` (same fallback as :func:`get_status`).
     """
     return {iid: get_status(iid) for iid in issue_ids}
+
+
+async def reserve_fix(issue_id: int) -> FixIssueStatus | None:
+    """Reserve an issue for an asynchronous fix attempt.
+
+    Returns ``None`` when a fix is already pending, running, or complete.
+    This keeps webhook redeliveries and near-simultaneous ``opened`` /
+    ``labeled`` events from starting duplicate Devin sessions.
+    """
+    async with _LOCK:
+        existing = _REGISTRY.get(issue_id)
+        if existing is not None and existing.state in _NON_STARTABLE_STATES:
+            return None
+
+        status = FixIssueStatus(
+            issue_id=issue_id,
+            state=DevinActionState.REQUEST_SENT,
+        )
+        _REGISTRY[issue_id] = status
+        return status
 
 
 def _build_prompt(issue: VulnerabilityIssue, repo: str, body: str | None) -> str:
@@ -419,6 +445,10 @@ def _parse_acus(value: Any) -> float | None:
 async def _set_status(status: FixIssueStatus) -> None:
     async with _LOCK:
         _REGISTRY[status.issue_id] = status
+
+
+async def mark_fix_failed(issue_id: int, message: str) -> None:
+    await _set_error(issue_id, message, session_id=None)
 
 
 async def _set_error(

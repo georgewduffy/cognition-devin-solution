@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from "react";
 import { RefreshCwIcon, Trash2Icon } from "lucide-react";
 import type { RowSelectionState, Updater } from "@tanstack/react-table";
 
+import { Toggle } from "@/components/ui/toggle";
+import { useAutoResolve } from "@/hooks/use-auto-resolve";
 import { useVulnerabilities } from "@/hooks/use-vulnerabilities";
 import { isIdentifiedIssue } from "@/lib/vulnerability-status";
 import { VulnerabilitiesTable } from "./vulnerabilities-table";
@@ -9,6 +11,12 @@ import { VulnerabilitiesTable } from "./vulnerabilities-table";
 export function VulnerabilitiesPage() {
   const { issues, syncStatus, error, fixStatuses, sync, clear, startFix } =
     useVulnerabilities();
+  const {
+    enabled: autoResolveEnabled,
+    pending: autoResolvePending,
+    error: autoResolveError,
+    setEnabled: setAutoResolveEnabled,
+  } = useAutoResolve();
 
   // Selection is lifted up to the page so the primary Resolve button can
   // reflect the current identified vulnerability selection
@@ -68,6 +76,8 @@ export function VulnerabilitiesPage() {
     void startFix(targetIds);
   }, [startFix, targetIds]);
 
+  const displayedError = error ?? autoResolveError;
+
   const syncClassName =
     "inline-flex h-8 w-8 items-center justify-center rounded-md border border-border-primary bg-transparent text-text-secondary transition-colors hover:text-text-primary hover:bg-hover-fill disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer " +
     (syncStatus === "success"
@@ -89,11 +99,26 @@ export function VulnerabilitiesPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 pt-1">
-              {error && (
+              {displayedError && (
                 <span className="text-destructive font-medium text-[12px]">
-                  Error: {error}
+                  Error: {displayedError}
                 </span>
               )}
+              <Toggle
+                pressed={autoResolveEnabled}
+                onPressedChange={(pressed) =>
+                  void setAutoResolveEnabled(pressed)
+                }
+                disabled={autoResolvePending}
+                title={
+                  autoResolveEnabled
+                    ? "Auto-resolve new vulnerabilities"
+                    : "Manual resolve mode"
+                }
+                aria-label="Toggle auto-resolve"
+              >
+                Auto
+              </Toggle>
               <button
                 type="button"
                 onClick={handleClear}
