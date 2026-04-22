@@ -95,6 +95,34 @@ cd backend
 PYTHONPATH=. uv run python scripts/test_integrations.py
 ```
 
+## Docker Setup
+
+The solution app can also be run with Docker Compose:
+
+```bash
+cp backend/.env.example backend/.env
+# Fill in DEVIN_*, GITHUB_* and GITHUB_WEBHOOK_SECRET in backend/.env
+docker compose up --build
+```
+
+Open:
+
+```text
+http://localhost:5173/vulnerabilities
+```
+
+The backend is exposed on:
+
+```text
+http://localhost:8000
+```
+
+For GitHub webhook testing with ngrok, point the GitHub webhook payload URL at:
+
+```text
+https://<your-ngrok-domain>/github/webhook
+```
+
 ## Frontend Setup
 
 ```bash
