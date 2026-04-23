@@ -2,34 +2,25 @@
 
 Event-driven vulnerability remediation system for a fork of Apache Superset.
 
-This project demonstrates how an engineering team can use the Devin API as an automation primitive: GitHub vulnerability issues are ingested into a dashboard, optionally trigger Devin remediation sessions automatically, and surface observable progress through issue status, Devin session links, PR links, and backend logs.
+This project demonstrates how an engineering team can use the Devin API as an automation primitive: GitHub vulnerability issues are ingested into a dashboard, optionally trigger Devin remediation sessions automatically, and surface observable progress through issue status, Devin session links, PR links, webhook delivery state, and backend logs.
 
-## What This Builds
+## What Runs
 
-The system connects three pieces:
+Docker Compose starts the full local system:
 
-- **GitHub** is the source of vulnerability work. Issues labeled `vulnerability` in the configured repository appear in the dashboard.
-- **FastAPI backend** receives GitHub webhooks, verifies signatures, syncs vulnerability issues, and starts/polls Devin sessions.
-- **React frontend** shows a Vulnerabilities table, live-updates when GitHub sends issue events, and provides manual or automatic remediation controls.
+- `backend`: FastAPI service on `http://localhost:8000`
+- `frontend`: production-built React app served by nginx on `http://localhost:5173`
+- `ngrok`: optional tunnel profile for GitHub webhooks, with the inspector on `http://localhost:4040`
 
-Core workflow:
+The host machine only needs Docker. Python, Node, npm, uv, and nginx all run inside containers.
 
-1. A vulnerability issue is created or labeled in GitHub.
-2. GitHub sends an `issues` webhook to the backend.
-3. The backend publishes a server-sent event to connected browsers.
-4. The frontend silently re-syncs the table from GitHub.
-5. If **Auto** is enabled, only the newly received vulnerability issue is reserved and sent to Devin for remediation.
-6. Devin opens a PR; the dashboard updates from `Identified` to `Working`, `PR Ready`, or `Resolved`.
+## Prerequisites
 
-## Requirements
-
-- Python `3.12+`
-- `uv`
-- Node.js and npm
+- Docker Desktop, or Docker Engine with Docker Compose v2
 - A Devin API key and organization ID
 - A GitHub personal access token for your Superset fork
 - Admin access to the GitHub repository if you want to configure webhooks
-- `ngrok` or another public HTTPS tunnel for local webhook testing
+- An ngrok account token for webhook testing
 
 Recommended GitHub token capabilities:
 
@@ -38,26 +29,23 @@ Recommended GitHub token capabilities:
 - Read pull requests
 - Access to the configured forked repository
 
-If you use the token to manage webhooks programmatically, it also needs repository webhook/admin permission. If you configure webhooks manually in the GitHub UI, repo admin access is enough.
+If you configure webhooks manually in the GitHub UI, repo admin access is enough. If you later automate webhook creation, the token also needs repository webhook/admin permission.
 
-## Project Structure
+## Configure
 
-```text
-backend/
-  app/
-    github/       GitHub REST client, issue sync, signed webhook receiver, SSE events
-    devin/        Devin API client, fix-session registry, auto-resolve state
-    main.py       FastAPI app and CORS setup
-frontend/
-  src/
-    pages/        Vulnerabilities dashboard and table
-    hooks/        Vulnerability sync and global auto-resolve state
-    api/          Browser API client
+There are two env files:
+
+- `.env` controls Docker Compose settings such as local ports and the optional ngrok token.
+- `backend/.env` controls application credentials used by the FastAPI backend.
+
+Create both from the checked-in examples:
+
+```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
 ```
 
-## Backend Setup
-
-Create `backend/.env`:
+Fill in `backend/.env`:
 
 ```bash
 DEVIN_API_KEY=...
@@ -73,151 +61,118 @@ GITHUB_WEBHOOK_SECRET=choose-a-high-entropy-random-secret
 LOG_LEVEL=INFO
 ```
 
-Install and run:
+Fill in `.env` only if you need to change local Docker defaults or run ngrok:
 
 ```bash
-cd backend
-uv sync
-PYTHONPATH=. uv run uvicorn app.main:app --reload --port 8000
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
+VITE_API_BASE_URL=http://localhost:8000
+NGROK_AUTHTOKEN=...
+NGROK_WEB_INTERFACE_PORT=4040
 ```
 
-Health checks:
+If you change `BACKEND_PORT`, also update `VITE_API_BASE_URL` and rebuild the frontend image because the browser API URL is compiled into the React bundle.
+
+## Run The App
+
+Build and start frontend and backend:
 
 ```bash
-curl http://localhost:8000/github/whoami
-curl http://localhost:8000/devin/auto_resolve
-```
-
-Run the integration smoke test:
-
-```bash
-cd backend
-PYTHONPATH=. uv run python scripts/test_integrations.py
-```
-
-## Docker Setup
-
-The solution app can also be run with Docker Compose:
-
-```bash
-cp backend/.env.example backend/.env
-# Fill in DEVIN_*, GITHUB_* and GITHUB_WEBHOOK_SECRET in backend/.env
 docker compose up --build
 ```
 
-Open:
+Open the dashboard:
 
 ```text
 http://localhost:5173/vulnerabilities
 ```
 
-The backend is exposed on:
-
-```text
-http://localhost:8000
-```
-
-For GitHub webhook testing with ngrok, point the GitHub webhook payload URL at:
-
-```text
-https://<your-ngrok-domain>/github/webhook
-```
-
-## Frontend Setup
+Useful health checks:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+curl http://localhost:8000/health
+curl http://localhost:8000/devin/auto_resolve
 ```
 
-Open:
-
-```text
-http://localhost:5173/vulnerabilities
-```
-
-Build and lint:
-
-```bash
-cd frontend
-npm run build
-npm run lint
-```
-
-The lint command may show a TanStack Table React Compiler warning; it is non-blocking.
-
-## GitHub Webhook Setup For Local Testing
-
-GitHub cannot call `localhost`, so expose the backend through ngrok:
-
-```bash
-ngrok http 8000
-```
-
-Copy the HTTPS forwarding URL, for example:
-
-```text
-https://example.ngrok-free.dev
-```
-
-Test that it reaches the backend:
-
-```bash
-curl https://example.ngrok-free.dev/devin/auto_resolve
-```
-
-Expected:
+Expected auto-resolve response before you toggle it on:
 
 ```json
 {"enabled":false}
 ```
 
-In your GitHub fork:
+To stop the app:
 
-1. Go to **Settings -> Webhooks**.
-2. Click **Add webhook** or edit the existing webhook.
-3. Set **Payload URL** to:
+```bash
+docker compose down
+```
 
-   ```text
-   https://example.ngrok-free.dev/github/webhook
-   ```
+## Run With Ngrok
 
-4. Set **Content type** to `application/json`.
-5. Set **Secret** to exactly the same value as `GITHUB_WEBHOOK_SECRET`.
-6. Select **Let me select individual events**.
-7. Enable:
-   - **Issues**
-   - **Pull requests** optional, but recommended for PR state refreshes
-8. Ensure **Active** is checked.
-9. Save the webhook.
+GitHub cannot call `localhost`, so webhook testing needs a public HTTPS tunnel. This repository runs ngrok through Docker as an optional Compose profile.
 
-Use **Recent Deliveries** in the GitHub webhook page to verify GitHub receives `200 OK`.
+First put your ngrok token in `.env`:
 
-Important: free ngrok URLs usually change when ngrok restarts. If the URL changes, update the GitHub webhook payload URL again.
+```bash
+NGROK_AUTHTOKEN=...
+```
 
-## Simulating The Workflow
+Then start the app with the tunnel:
 
-### Manual Sync
+```bash
+docker compose --profile tunnel up --build
+```
 
-1. Open the Vulnerabilities page.
+Find the public forwarding URL:
+
+```bash
+curl http://localhost:4040/api/tunnels
+```
+
+You can also open the ngrok inspector:
+
+```text
+http://localhost:4040
+```
+
+Use the HTTPS forwarding URL as your GitHub webhook base URL. The full payload URL should be:
+
+```text
+https://<your-ngrok-domain>/github/webhook
+```
+
+Configure the webhook in your Superset fork:
+
+1. Go to `Settings -> Webhooks`.
+2. Click `Add webhook`.
+3. Set `Payload URL` to `https://<your-ngrok-domain>/github/webhook`.
+4. Set `Content type` to `application/json`.
+5. Set `Secret` to the same value as `GITHUB_WEBHOOK_SECRET` in `backend/.env`.
+6. Select individual events and enable `Issues`.
+7. Optionally enable `Pull requests` for PR state refreshes.
+8. Save the webhook and confirm GitHub shows `200 OK` in Recent Deliveries.
+
+Free ngrok URLs usually change when the tunnel restarts. If the URL changes, update the GitHub webhook payload URL.
+
+## Simulate The Workflow
+
+Manual sync:
+
+1. Open `http://localhost:5173/vulnerabilities`.
 2. Click the refresh icon.
 3. Issues in the configured GitHub repository with the `vulnerability` label should appear.
 
-### Event-Driven Sync With Auto Off
+Event-driven sync with auto remediation off:
 
-1. Keep backend, frontend, and ngrok running.
-2. Keep **Auto** toggled off in the Vulnerabilities header.
+1. Keep Compose and ngrok running.
+2. Keep `Auto` toggled off in the Vulnerabilities header.
 3. Create a GitHub issue in the configured repo.
 4. Add the `vulnerability` label when creating it, or add the label after creation.
 5. The issue should appear automatically in the frontend.
 6. Devin should not start automatically.
 
-Expected status: `Identified`.
+Event-driven auto remediation:
 
-### Event-Driven Auto Remediation
-
-1. Toggle **Auto** on in the Vulnerabilities header.
+1. Toggle `Auto` on in the Vulnerabilities header.
 2. Create or label one GitHub issue with `vulnerability`.
 3. The issue should appear automatically.
 4. Only that newly received issue should start a Devin session.
@@ -228,6 +183,32 @@ Identified -> Waking Devin up -> Working -> PR Ready -> Resolved
 ```
 
 Use the row action links to inspect the Devin session and generated PR.
+
+## Observability
+
+For an engineering leader, the main question is whether the system is finding work, starting remediation, and producing PRs. The local signals are:
+
+- Dashboard rows show each vulnerability issue and its current remediation state.
+- Each active row links to the Devin session when one has started.
+- Completed rows link to the generated pull request when available.
+- Backend logs show webhook ingestion, GitHub sync, Devin session creation, and failures:
+
+  ```bash
+  docker compose logs -f backend
+  ```
+
+- GitHub webhook Recent Deliveries shows whether GitHub reached the backend.
+- The ngrok inspector shows inbound webhook requests and backend responses:
+
+  ```text
+  http://localhost:4040
+  ```
+
+Container health is visible with:
+
+```bash
+docker compose ps
+```
 
 ## API Summary
 
@@ -246,16 +227,23 @@ Devin:
 - `GET /devin/auto_resolve`
 - `PUT /devin/auto_resolve`
 
-## Demo Script
+## Troubleshooting
 
-For a short technical demo:
+If a port is already taken, edit `.env` and rerun `docker compose up --build`.
 
-1. Start with the problem: vulnerability issues arrive faster than teams can triage and remediate.
-2. Show the dashboard with identified GitHub issues.
-3. Create or label a new GitHub issue and show it appearing without manual refresh.
-4. Toggle **Auto** on and create another vulnerability issue.
-5. Show the row moving into Devin-managed remediation.
-6. Open the Devin session and generated PR.
-7. Close with observability: status table, PR links, session links, backend logs, and GitHub deliveries.
+If the frontend cannot reach the backend, confirm `VITE_API_BASE_URL` matches the host backend URL and rebuild the frontend image.
 
-The intended business impact: reduce vulnerability remediation latency while preserving engineer visibility and control.
+If GitHub webhook deliveries fail, check all of these:
+
+- Compose was started with `--profile tunnel`.
+- `NGROK_AUTHTOKEN` is set in `.env`.
+- The GitHub webhook uses the current ngrok HTTPS URL.
+- The webhook secret exactly matches `GITHUB_WEBHOOK_SECRET`.
+- The backend container is healthy in `docker compose ps`.
+
+If credentials or environment values change, restart the containers:
+
+```bash
+docker compose down
+docker compose up --build
+```
